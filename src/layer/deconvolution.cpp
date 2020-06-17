@@ -13,8 +13,10 @@
 // specific language governing permissions and limitations under the License.
 
 #include "deconvolution.h"
-#include <algorithm>
+
 #include "layer_type.h"
+
+#include <algorithm>
 
 namespace ncnn {
 
@@ -77,7 +79,7 @@ int Deconvolution::forward(const Mat& bottom_blob, Mat& top_blob, const Option& 
     int channels = bottom_blob.c;
     size_t elemsize = bottom_blob.elemsize;
 
-//     fprintf(stderr, "Deconvolution input %d x %d  pad = %d %d  ksize=%d %d  stride=%d %d\n", w, h, pad_w, pad_h, kernel_w, kernel_h, stride_w, stride_h);
+    //     NCNN_LOGE("Deconvolution input %d x %d  pad = %d %d  ksize=%d %d  stride=%d %d", w, h, pad_w, pad_h, kernel_w, kernel_h, stride_w, stride_h);
 
     const int kernel_extent_w = dilation_w * (kernel_w - 1) + 1;
     const int kernel_extent_h = dilation_h * (kernel_h - 1) + 1;
@@ -86,12 +88,7 @@ int Deconvolution::forward(const Mat& bottom_blob, Mat& top_blob, const Option& 
     int outh = (h - 1) * stride_h + kernel_extent_h;
 
     Mat top_blob_bordered;
-    if (output_w == outw && output_h == outh && output_pad_right == 0 && output_pad_bottom == 0)
-    {
-        top_blob_bordered = top_blob;
-        top_blob_bordered.create(outw, outh, num_output, elemsize, opt.blob_allocator);
-    }
-    else if (pad_left > 0 || pad_right > 0 || pad_top > 0 || pad_bottom > 0 || output_pad_right > 0 || output_pad_bottom > 0 || (output_w > 0 && output_h > 0))
+    if (pad_left > 0 || pad_right > 0 || pad_top > 0 || pad_bottom > 0 || output_pad_right > 0 || output_pad_bottom > 0 || (output_w > 0 && output_h > 0))
     {
         top_blob_bordered.create(outw, outh, num_output, elemsize, opt.workspace_allocator);
     }
@@ -126,7 +123,7 @@ int Deconvolution::forward(const Mat& bottom_blob, Mat& top_blob, const Option& 
 
     // num_output
     #pragma omp parallel for num_threads(opt.num_threads)
-    for (int p=0; p<num_output; p++)
+    for (int p = 0; p < num_output; p++)
     {
         Mat out = top_blob_bordered.channel(p);
 
@@ -138,12 +135,12 @@ int Deconvolution::forward(const Mat& bottom_blob, Mat& top_blob, const Option& 
         {
             for (int j = 0; j < w; j++)
             {
-                float* outptr = out.row(i*stride_h) + j*stride_w;
+                float* outptr = out.row(i * stride_h) + j * stride_w;
 
                 const float* kptr = (const float*)weight_data + maxk * channels * p;
 
                 // channels
-                for (int q=0; q<channels; q++)
+                for (int q = 0; q < channels; q++)
                 {
                     const Mat m = bottom_blob.channel(q);
                     float val = *(m.row(i) + j);
@@ -151,7 +148,7 @@ int Deconvolution::forward(const Mat& bottom_blob, Mat& top_blob, const Option& 
                     for (int k = 0; k < maxk; k++)
                     {
                         float w = kptr[k];
-                        outptr[ space_ofs[k] ] += val * w;
+                        outptr[space_ofs[k]] += val * w;
                     }
 
                     kptr += maxk;
@@ -202,32 +199,24 @@ int Deconvolution::forward(const Mat& bottom_blob, Mat& top_blob, const Option& 
 
             for (int i = 0; i < size; i++)
             {
-                outptr[i] = 1.f / (1.f + exp(-outptr[i]));
+                outptr[i] = static_cast<float>(1.f / (1.f + exp(-outptr[i])));
             }
         }
     }
 
-    if (output_w == outw && output_h == outh && output_pad_right == 0 && output_pad_bottom == 0)
+    if (pad_left > 0 || pad_right > 0 || pad_top > 0 || pad_bottom > 0)
     {
-        top_blob = top_blob_bordered;
-    }
-    else if (pad_left > 0 || pad_right > 0 || pad_top > 0 || pad_bottom > 0)
-    {
+        Mat top_blob_bordered_adj = top_blob_bordered;
         if (output_pad_right > 0 || output_pad_bottom > 0)
         {
-            Mat top_blob_unbordered;
-            Option opt_ub = opt;
-            opt_ub.blob_allocator = opt.workspace_allocator;
-            copy_cut_border(top_blob_bordered, top_blob_unbordered, pad_top, pad_bottom, pad_left, pad_right, opt_ub);
-            if (top_blob_unbordered.empty())
+            Option opt_b = opt;
+            opt_b.blob_allocator = opt.workspace_allocator;
+            copy_make_border(top_blob_bordered, top_blob_bordered_adj, 0, output_pad_bottom, 0, output_pad_right, BORDER_CONSTANT, 0.f, opt_b);
+            if (top_blob_bordered_adj.empty())
                 return -100;
+        }
 
-            copy_make_border(top_blob_unbordered, top_blob, 0, output_pad_bottom, 0, output_pad_right, BORDER_CONSTANT, 0.f, opt);
-        }
-        else
-        {
-            copy_cut_border(top_blob_bordered, top_blob, pad_top, pad_bottom, pad_left, pad_right, opt);
-        }
+        copy_cut_border(top_blob_bordered_adj, top_blob, pad_top, pad_bottom, pad_left, pad_right, opt);
         if (top_blob.empty())
             return -100;
 
@@ -267,7 +256,16 @@ int Deconvolution::forward(const Mat& bottom_blob, Mat& top_blob, const Option& 
     }
     else
     {
-        top_blob = top_blob_bordered;
+        if (output_pad_right > 0 || output_pad_bottom > 0)
+        {
+            copy_make_border(top_blob_bordered, top_blob, 0, output_pad_bottom, 0, output_pad_right, BORDER_CONSTANT, 0.f, opt);
+            if (top_blob.empty())
+                return -100;
+        }
+        else
+        {
+            top_blob = top_blob_bordered;
+        }
     }
 
     return 0;
