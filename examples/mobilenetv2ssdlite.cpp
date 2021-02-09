@@ -13,16 +13,12 @@
 // specific language governing permissions and limitations under the License.
 
 #include "net.h"
-#include "platform.h"
 
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <stdio.h>
 #include <vector>
-#if NCNN_VULKAN
-#include "gpu.h"
-#endif // NCNN_VULKAN
 
 class Noop : public ncnn::Layer
 {
@@ -40,9 +36,7 @@ static int detect_mobilenetv2(const cv::Mat& bgr, std::vector<Object>& objects)
 {
     ncnn::Net mobilenetv2;
 
-#if NCNN_VULKAN
     mobilenetv2.opt.use_vulkan_compute = true;
-#endif // NCNN_VULKAN
 
     mobilenetv2.register_custom_layer("Silence", Noop_layer_creator);
 
@@ -64,8 +58,6 @@ static int detect_mobilenetv2(const cv::Mat& bgr, std::vector<Object>& objects)
     in.substract_mean_normalize(mean_vals, norm_vals);
 
     ncnn::Extractor ex = mobilenetv2.create_extractor();
-    ex.set_light_mode(true);
-    ex.set_num_threads(4);
 
     ex.input("data", in);
 
@@ -154,16 +146,8 @@ int main(int argc, char** argv)
         return -1;
     }
 
-#if NCNN_VULKAN
-    ncnn::create_gpu_instance();
-#endif // NCNN_VULKAN
-
     std::vector<Object> objects;
     detect_mobilenetv2(m, objects);
-
-#if NCNN_VULKAN
-    ncnn::destroy_gpu_instance();
-#endif // NCNN_VULKAN
 
     draw_objects(m, objects);
 

@@ -62,8 +62,6 @@ static int detect_mobilenetv3(const cv::Mat& bgr, std::vector<Object>& objects)
     in.substract_mean_normalize(mean_vals, norm_vals);
 
     ncnn::Extractor ex = mobilenetv3.create_extractor();
-    ex.set_light_mode(true);
-    ex.set_num_threads(4);
 
     ex.input("input", in);
 
@@ -162,16 +160,8 @@ int main(int argc, char** argv)
         return -1;
     }
 
-#if NCNN_VULKAN
-    ncnn::create_gpu_instance();
-#endif // NCNN_VULKAN
-
     std::vector<Object> objects;
     detect_mobilenetv3(m, objects);
-
-#if NCNN_VULKAN
-    ncnn::destroy_gpu_instance();
-#endif // NCNN_VULKAN
 
     draw_objects(m, objects);
 

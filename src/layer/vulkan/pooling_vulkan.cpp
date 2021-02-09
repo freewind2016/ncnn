@@ -17,12 +17,9 @@
 #include "layer_shader_type.h"
 #include "layer_type.h"
 
-#include <algorithm>
 #include <float.h>
 
 namespace ncnn {
-
-DEFINE_LAYER_CREATOR(Pooling_vulkan)
 
 Pooling_vulkan::Pooling_vulkan()
 {
@@ -253,6 +250,12 @@ int Pooling_vulkan::create_pipeline(const Option& _opt)
             pipeline_pooling_pack8->set_optimal_local_size_xyz(local_size_xyz);
             pipeline_pooling_pack8->create(LayerShaderType::pooling_pack8, opt, specializations);
         }
+    }
+
+    // todo support adaptive_pooling in vulkan implementation
+    if (adaptive_pooling)
+    {
+        support_vulkan = false;
     }
 
     return 0;

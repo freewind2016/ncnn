@@ -13,16 +13,12 @@
 // specific language governing permissions and limitations under the License.
 
 #include "net.h"
-#include "platform.h"
 
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <stdio.h>
 #include <vector>
-#if NCNN_VULKAN
-#include "gpu.h"
-#endif // NCNN_VULKAN
 
 struct Object
 {
@@ -35,9 +31,7 @@ static int detect_mobilenet(const cv::Mat& bgr, std::vector<Object>& objects)
 {
     ncnn::Net mobilenet;
 
-#if NCNN_VULKAN
     mobilenet.opt.use_vulkan_compute = true;
-#endif // NCNN_VULKAN
 
     // model is converted from https://github.com/chuanqi305/MobileNet-SSD
     // and can be downloaded from https://drive.google.com/open?id=0ByaKLD9QaPtucWk0Y0dha1VVY0U
@@ -57,7 +51,6 @@ static int detect_mobilenet(const cv::Mat& bgr, std::vector<Object>& objects)
     in.substract_mean_normalize(mean_vals, norm_vals);
 
     ncnn::Extractor ex = mobilenet.create_extractor();
-    //     ex.set_num_threads(4);
 
     ex.input("data", in);
 
@@ -146,16 +139,8 @@ int main(int argc, char** argv)
         return -1;
     }
 
-#if NCNN_VULKAN
-    ncnn::create_gpu_instance();
-#endif // NCNN_VULKAN
-
     std::vector<Object> objects;
     detect_mobilenet(m, objects);
-
-#if NCNN_VULKAN
-    ncnn::destroy_gpu_instance();
-#endif // NCNN_VULKAN
 
     draw_objects(m, objects);
 

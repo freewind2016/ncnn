@@ -13,24 +13,18 @@
 // specific language governing permissions and limitations under the License.
 
 #include "net.h"
-#include "platform.h"
 
 #include <algorithm>
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <stdio.h>
 #include <vector>
-#if NCNN_VULKAN
-#include "gpu.h"
-#endif // NCNN_VULKAN
 
 static int detect_squeezenet(const cv::Mat& bgr, std::vector<float>& cls_scores)
 {
     ncnn::Net squeezenet;
 
-#if NCNN_VULKAN
     squeezenet.opt.use_vulkan_compute = true;
-#endif // NCNN_VULKAN
 
     // the ncnn model https://github.com/nihui/ncnn-assets/tree/master/models
     squeezenet.load_param("squeezenet_v1.1.param");
@@ -99,16 +93,8 @@ int main(int argc, char** argv)
         return -1;
     }
 
-#if NCNN_VULKAN
-    ncnn::create_gpu_instance();
-#endif // NCNN_VULKAN
-
     std::vector<float> cls_scores;
     detect_squeezenet(m, cls_scores);
-
-#if NCNN_VULKAN
-    ncnn::destroy_gpu_instance();
-#endif // NCNN_VULKAN
 
     print_topk(cls_scores, 3);
 

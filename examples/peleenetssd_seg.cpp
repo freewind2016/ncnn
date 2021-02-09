@@ -13,16 +13,12 @@
 // specific language governing permissions and limitations under the License.
 
 #include "net.h"
-#include "platform.h"
 
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <stdio.h>
 #include <vector>
-#if NCNN_VULKAN
-#include "gpu.h"
-#endif // NCNN_VULKAN
 
 struct Object
 {
@@ -35,9 +31,7 @@ static int detect_peleenet(const cv::Mat& bgr, std::vector<Object>& objects, ncn
 {
     ncnn::Net peleenet;
 
-#if NCNN_VULKAN
     peleenet.opt.use_vulkan_compute = true;
-#endif // NCNN_VULKAN
 
     // model is converted from https://github.com/eric612/MobileNet-YOLO
     // and can be downloaded from https://drive.google.com/open?id=1Wt6jKv13sBRMHgrGAJYlOlRF-o80pC0g
@@ -57,7 +51,6 @@ static int detect_peleenet(const cv::Mat& bgr, std::vector<Object>& objects, ncn
     in.substract_mean_normalize(mean_vals, norm_vals);
 
     ncnn::Extractor ex = peleenet.create_extractor();
-    //     ex.set_num_threads(4);
 
     ex.input("data", in);
 
@@ -189,17 +182,9 @@ int main(int argc, char** argv)
         return -1;
     }
 
-#if NCNN_VULKAN
-    ncnn::create_gpu_instance();
-#endif // NCNN_VULKAN
-
     std::vector<Object> objects;
     ncnn::Mat seg_out;
     detect_peleenet(m, objects, seg_out);
-
-#if NCNN_VULKAN
-    ncnn::destroy_gpu_instance();
-#endif // NCNN_VULKAN
 
     draw_objects(m, objects, seg_out);
 

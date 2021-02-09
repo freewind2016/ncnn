@@ -14,12 +14,9 @@
 
 #include "detectionoutput.h"
 
-#include <algorithm>
 #include <math.h>
 
 namespace ncnn {
-
-DEFINE_LAYER_CREATOR(DetectionOutput)
 
 DetectionOutput::DetectionOutput()
 {
