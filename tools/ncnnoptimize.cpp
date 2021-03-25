@@ -89,6 +89,20 @@
 #include "layer/yolodetectionoutput.h"
 #include "layer/yolov3detectionoutput.h"
 
+static void replace_denormals_with_zero(float* data, size_t data_length)
+{
+    const int total = static_cast<int>(data_length);
+    for (size_t i = 0; i < data_length; ++i)
+    {
+        float value = data[i];
+
+        if (fabsf(value) < 1e-30 && fabsf(value) != 0.f)
+        {
+            data[i] = 0.f;
+        }
+    }
+}
+
 class DataReaderFromEmpty : public ncnn::DataReader
 {
 public:
@@ -191,6 +205,8 @@ public:
     ncnn::ParamDict mpd;
 };
 
+DEFINE_LAYER_CREATOR(CustomLayer)
+
 class NetOptimize : public ncnn::Net
 {
 public:
@@ -199,15 +215,17 @@ public:
     std::vector<ncnn::Blob>& blobs;
     std::vector<ncnn::Layer*>& layers;
 
-    virtual int custom_layer_to_index(const char* type);
     virtual ncnn::Layer* create_custom_layer(const char* type);
-    virtual ncnn::Layer* create_custom_layer(int index);
 
-    int custom_layer_index;
+    bool has_custom_layer;
 
 public:
     // 0=fp32 1=fp16
     int storage_type;
+
+    // Cut param and bin -1=no cut
+    int cutstart;
+    int cutend;
 
 public:
     int fuse_batchnorm_scale();
@@ -249,6 +267,8 @@ public:
     int shape_inference();
     int estimate_memory_footprint();
 
+    int set_cutparam(const char* cutstartname, const char* cutendname);
+
 public:
     int fprintf_param_int_array(int id, const ncnn::Mat& m, FILE* pp);
     int fprintf_param_float_array(int id, const ncnn::Mat& m, FILE* pp);
@@ -262,20 +282,9 @@ public:
 NetOptimize::NetOptimize()
     : blobs(mutable_blobs()), layers(mutable_layers())
 {
-    custom_layer_index = 0;
-}
-
-int NetOptimize::custom_layer_to_index(const char* type)
-{
-    int index = Net::custom_layer_to_index(type);
-    if (index != -1)
-        return index;
-
-    fprintf(stderr, "custom_layer_to_index %s\n", type);
-
-    index = ncnn::LayerType::CustomBit | custom_layer_index;
-    custom_layer_index++;
-    return index;
+    has_custom_layer = false;
+    cutstart = -1;
+    cutend = -1;
 }
 
 ncnn::Layer* NetOptimize::create_custom_layer(const char* type)
@@ -286,23 +295,11 @@ ncnn::Layer* NetOptimize::create_custom_layer(const char* type)
 
     fprintf(stderr, "create_custom_layer %s\n", type);
 
-    layer = new CustomLayer;
-    layer->type = type;
-    layer->typeindex = custom_layer_to_index(type);
-    return layer;
-}
+    register_custom_layer(type, CustomLayer_layer_creator);
 
-ncnn::Layer* NetOptimize::create_custom_layer(int index)
-{
-    ncnn::Layer* layer = Net::create_custom_layer(index);
-    if (layer)
-        return layer;
+    has_custom_layer = true;
 
-    fprintf(stderr, "create_custom_layer %d\n", index);
-
-    layer = new CustomLayer;
-    layer->typeindex = index;
-    return layer;
+    return Net::create_custom_layer(type);
 }
 
 int NetOptimize::fuse_batchnorm_scale()
@@ -2763,9 +2760,9 @@ int NetOptimize::replace_convolution_with_innerproduct_after_innerproduct()
 
 int NetOptimize::shape_inference()
 {
-    if (custom_layer_index)
+    if (has_custom_layer)
     {
-        fprintf(stderr, "model has %d custom layer, shape_inference skipped\n", custom_layer_index);
+        fprintf(stderr, "model has custom layer, shape_inference skipped\n");
         return -1;
     }
 
@@ -2882,9 +2879,9 @@ int NetOptimize::shape_inference()
 
 int NetOptimize::estimate_memory_footprint()
 {
-    if (custom_layer_index)
+    if (has_custom_layer)
     {
-        fprintf(stderr, "model has %d custom layer, estimate_memory_footprint skipped\n", custom_layer_index);
+        fprintf(stderr, "model has custom layer, estimate_memory_footprint skipped\n");
         return -1;
     }
 
@@ -2958,6 +2955,41 @@ int NetOptimize::estimate_memory_footprint()
     return 0;
 }
 
+int NetOptimize::set_cutparam(const char* cutstartname, const char* cutendname)
+{
+    if (cutstartname != nullptr)
+    {
+        int layindex = find_layer_index_by_name(cutstartname);
+        if (layindex >= 0)
+        {
+            cutstart = layindex;
+            fprintf(stderr, "cutstart layer %d:%s\n", layindex, cutstartname);
+        }
+        else
+        {
+            fprintf(stderr, "not find target cutstart layer %s\n", cutstartname);
+            return -1;
+        }
+    }
+
+    if (cutendname != nullptr)
+    {
+        int layindex = find_layer_index_by_name(cutendname);
+        if (layindex >= 0)
+        {
+            cutend = layindex;
+            fprintf(stderr, "cutend layer %d:%s\n", layindex, cutendname);
+        }
+        else
+        {
+            fprintf(stderr, "not find target cutend layer %s\n", cutendname);
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 int NetOptimize::fprintf_param_int_array(int id, const ncnn::Mat& m, FILE* pp)
 {
     const int count = m.w;
@@ -3007,6 +3039,11 @@ int NetOptimize::fwrite_weight_tag_data(int tag, const ncnn::Mat& data, FILE* bp
     else
     {
         fwrite(&tag, sizeof(int), 1, bp);
+        if (data_flattened.elemsize == 4) // fp32
+        {
+            replace_denormals_with_zero(data_flattened, data_flattened.w);
+        }
+
         fwrite(data_flattened.data, data_flattened.elemsize, data_flattened.w, bp);
     }
 
@@ -3024,6 +3061,11 @@ int NetOptimize::fwrite_weight_data(const ncnn::Mat& data, FILE* bp)
     int p0 = ftell(bp);
 
     ncnn::Mat data_flattened = data.reshape(data.w * data.h * data.c);
+    if (data_flattened.elemsize == 4) // fp32
+    {
+        replace_denormals_with_zero(data_flattened, data_flattened.w);
+    }
+
     fwrite(data_flattened.data, data_flattened.elemsize, data_flattened.w, bp);
 
     // padding to 32bit align
@@ -3079,6 +3121,12 @@ int NetOptimize::save(const char* parampath, const char* binpath)
     {
         const ncnn::Layer* layer = layers[i];
         if (layer->type == "ncnnfused")
+            continue;
+
+        if (cutstart > 0 && i < cutstart)
+            continue;
+
+        if (cutend > 0 && i > cutend)
             continue;
 
         size_t bottom_count = layer->bottoms.size();
@@ -3906,6 +3954,7 @@ int NetOptimize::save(const char* parampath, const char* binpath)
             ncnn::ShuffleChannel* op_default = (ncnn::ShuffleChannel*)layer_default;
 
             fprintf_param_value(" 0=%d", group)
+            fprintf_param_value(" 1=%d", reverse)
         }
         else if (layer->type == "Slice")
         {
@@ -4010,9 +4059,9 @@ int NetOptimize::save(const char* parampath, const char* binpath)
 
 int main(int argc, char** argv)
 {
-    if (argc != 6)
+    if (argc < 6)
     {
-        fprintf(stderr, "usage: %s [inparam] [inbin] [outparam] [outbin] [flag]\n", argv[0]);
+        fprintf(stderr, "usage: %s [inparam] [inbin] [outparam] [outbin] [flag] [cutstart] [cutend]\n", argv[0]);
         return -1;
     }
 
@@ -4021,6 +4070,18 @@ int main(int argc, char** argv)
     const char* outparam = argv[3];
     const char* outbin = argv[4];
     int flag = atoi(argv[5]);
+    const char* cutstartname = nullptr;
+    const char* cutendname = nullptr;
+
+    if (argc > 6)
+    {
+        cutstartname = argv[6];
+    }
+
+    if (argc > 7)
+    {
+        cutendname = argv[7];
+    }
 
     NetOptimize optimizer;
 
@@ -4034,6 +4095,7 @@ int main(int argc, char** argv)
     }
 
     optimizer.load_param(inparam);
+
     if (strcmp(inbin, "null") == 0)
     {
         DataReaderFromEmpty dr;
@@ -4041,6 +4103,11 @@ int main(int argc, char** argv)
     }
     else
         optimizer.load_model(inbin);
+
+    if (optimizer.set_cutparam(cutstartname, cutendname) < 0)
+    {
+        return -1;
+    }
 
     optimizer.fuse_batchnorm_scale();
     optimizer.fuse_convolution_batchnorm();
